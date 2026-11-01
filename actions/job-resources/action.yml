@@ -1,0 +1,10 @@
+name: Job resources
+description: >-
+  Logs what this job's container used (memory peak, CPU seconds, pressure) and appends a table to the job summary,
+  for sizing the CI runners. Skips quietly where cgroup v2 isn't visible (a hosted runner) and never fails the job.
+runs:
+  using: composite
+  steps:
+    - name: Runner resources
+      shell: bash
+      run: "$GITHUB_ACTION_PATH/job-resources.sh"

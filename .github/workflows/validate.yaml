@@ -1,0 +1,47 @@
+# Lints this repo (scripts/validate). Tools come from .mise.toml; the org only allows GitHub-owned/verified
+# actions pinned to a commit SHA.
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # renovate: datasource=github-releases depName=jdx/mise
+  MISE_VERSION: v2026.10.22
+
+jobs:
+  validate:
+    # Same switch as the other repos: the CI runner when the repository variable CI_RUNNER names it.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-26.04' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # This repo's own copy of the action: a change to it is tested by the PR that makes it.
+      - uses: ./actions/setup-mise
+        with:
+          version: ${{ env.MISE_VERSION }}
+
+      - name: Install pinned tools (.mise.toml)
+        run: mise trust --yes && mise install
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Validate
+        run: mise exec -- scripts/validate
+        env:
+          GH_TOKEN: ${{ github.token }} # zizmor's online audits
+
+      - uses: ./actions/job-resources
+        if: always()
