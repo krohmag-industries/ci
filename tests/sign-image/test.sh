@@ -138,7 +138,7 @@ validate_inputs; check "inputs: a good call is accepted" '[ $rc = 0 ]'
 validate_inputs OWNER=Krohmag-Industries; check "inputs: the owner compares lower-cased" '[ $rc = 0 ]'
 validate_inputs IMAGE=ghcr.io/krohmag-industries/app-extra; check "inputs: an image named app-<x> is accepted" '[ $rc = 0 ]'
 validate_inputs IMAGE=ghcr.io/krohmag-industries/app/sub; check "inputs: an image named app/<x> is accepted" '[ $rc = 0 ]'
-validate_inputs TAG=main GITHUB_REF=refs/pull/1/merge TAG=; check "inputs: no tag, any ref" '[ $rc = 0 ]'
+validate_inputs GITHUB_REF=refs/pull/1/merge TAG=; check "inputs: no tag, any ref" '[ $rc = 0 ]'
 validate_inputs TAG= SBOM_PACKAGES=; check "inputs: tag and sbom-packages are optional" '[ $rc = 0 ]'
 bad() { validate_inputs "$1"; check "inputs: refused $2" '[ $rc != 0 ]'; }
 bad "IMAGE=ghcr.io/other-org/app" "an image in another owner's namespace"
@@ -170,6 +170,19 @@ bad 'SBOM_PACKAGES=git*' "sbom-packages with a glob"
 bad "TAG=$(printf 'a%.0s' {1..129})" "a tag longer than 128 characters"
 bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/a^b$' "a base-signer with a ^ in the middle"
 bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/a$b$' "a base-signer with a $ in the middle"
+
+# The image-reading step must not see the OIDC request variables (only `sign` may mint a token)
+mkdir -p "$t/stepdir/.sign-image/scripts/sign-image"
+cat >"$t/stepdir/.sign-image/scripts/sign-image/predicates" <<'STUB'
+#!/usr/bin/env bash
+echo "url=${ACTIONS_ID_TOKEN_REQUEST_URL-unset} token=${ACTIONS_ID_TOKEN_REQUEST_TOKEN-unset}" >"$SEEN"
+STUB
+chmod +x "$t/stepdir/.sign-image/scripts/sign-image/predicates"
+rc=0
+(cd "$t/stepdir" && env SEEN="$t/seen" RUNNER_TEMP="$t" IMAGE="$image" DIGEST="$digest" BASE="$base" BASE_SIGNER="$signer" \
+  ACTIONS_ID_TOKEN_REQUEST_URL=https://example.invalid/token ACTIONS_ID_TOKEN_REQUEST_TOKEN=secret-request-token \
+  bash -c "$(step 'Check the image and write the SBOM and provenance')") >"$t/log" 2>&1 || rc=$?
+check "predicates runs without the OIDC request variables" '[ $rc = 0 ] && [ "$(cat "$t/seen")" = "url=unset token=unset" ]'
 
 # The OIDC claims step: a fake token whose payload names the called workflow
 b64url() { base64 | tr -d '=\n' | tr '+/' '-_'; }
