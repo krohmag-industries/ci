@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Usage: scripts/sign-image/attestations PREDICATES_DIR
+# Checks the bare predicates (sbom.spdx.json and provenance.json) before they are attested. An empty SBOM would pass
+# every other check and tell a scanner nothing, so it must list at least one package and every name in SBOM_PACKAGES
+# (space separated, set by the caller); the provenance must be a SLSA v1 predicate with a builder and dependencies.
+set -euo pipefail
+src="${1:?usage: attestations PREDICATES_DIR}"
+[ -d "$src" ] || { echo "no directory at $src" >&2; exit 1; }
+[ -s "$src/sbom.spdx.json" ] || { echo "no SBOM at $src/sbom.spdx.json" >&2; exit 1; }
+[ -s "$src/provenance.json" ] || { echo "no provenance at $src/provenance.json" >&2; exit 1; }
+
+count=$(jq '[.packages[]?] | length' "$src/sbom.spdx.json")
+echo "Packages in the SBOM: ${count}"
+[ "$count" -gt 0 ] || { echo "the SBOM lists no packages: the scanner didn't read the image" >&2; exit 1; }
+names=$(jq -r '.packages[]? | .name' "$src/sbom.spdx.json")
+for p in ${SBOM_PACKAGES:-}; do
+  if grep -qxF -- "$p" <<<"$names"; then echo "ok    $p is in the SBOM"; else echo "FAIL  $p is not in the SBOM" >&2; exit 1; fi
+done
+jq -e '.buildDefinition.buildType and .runDetails.builder.id and (.buildDefinition.resolvedDependencies | length > 0)' \
+  "$src/provenance.json" >/dev/null || { echo "the provenance is not a SLSA predicate" >&2; exit 1; }
+echo "ok    SLSA provenance"

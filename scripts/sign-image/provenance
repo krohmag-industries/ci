@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Usage: scripts/sign-image/provenance BASE_REF
+# Prints a SLSA v1 provenance predicate for an image to stdout, from GitHub's environment alone: the commit, the base
+# image (BASE_REF, pinned by digest), the caller's workflow and run, and the sign-image workflow's own commit.
+# It reads nothing the build produced, and nothing from the caller's checkout.
+# Needs GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_REF, GITHUB_WORKFLOW_REF and JOB_WORKFLOW_REF (the called workflow,
+# `owner/repo/.github/workflows/file@sha`, from the workflow's OIDC claims); the run id and server URL when present.
+set -euo pipefail
+base="${1:?usage: provenance BASE_REF}"
+case "$base" in *@sha256:*) ;; *) echo "BASE_REF must be pinned by digest: $base" >&2; exit 1 ;; esac
+server="${GITHUB_SERVER_URL:-https://github.com}"
+source_repo="$server/${GITHUB_REPOSITORY:?}"
+signer_ref="${JOB_WORKFLOW_REF:?}"
+signer_repo="$server/${signer_ref%%/.github/*}"
+run_url=""
+[ -z "${GITHUB_RUN_ID:-}" ] || run_url="$source_repo/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT:-1}"
+jq -n \
+  --arg source "git+$source_repo@${GITHUB_REF:?}" \
+  --arg commit "${GITHUB_SHA:?}" \
+  --arg workflow "${GITHUB_WORKFLOW_REF:?}" \
+  --arg base "${base%@*}" --arg base_digest "${base##*@sha256:}" \
+  --arg signer "git+$signer_repo" --arg signer_commit "${signer_ref##*@}" \
+  --arg builder "$server/${signer_ref%@*}" \
+  --arg run_url "$run_url" --arg event "${GITHUB_EVENT_NAME:-unknown}" \
+  '{
+    buildDefinition: {
+      buildType: "https://github.com/krohmag-industries/ci/scripts/sign-image/provenance@v1",
+      externalParameters: { source: $source, workflow: $workflow },
+      internalParameters: { event: $event },
+      resolvedDependencies: [
+        { uri: $source, digest: { gitCommit: $commit } },
+        { uri: $base, digest: { sha256: $base_digest } },
+        { uri: $signer, digest: { gitCommit: $signer_commit } }
+      ]
+    },
+    runDetails: {
+      builder: { id: $builder },
+      metadata: { invocationId: $run_url }
+    }
+  }'
