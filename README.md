@@ -23,11 +23,11 @@ extensions (`--certificate-github-workflow-repository`, `-ref`); kroh-lab `docs/
     permissions: {contents: read, packages: write, id-token: write}
     uses: krohmag-industries/ci/.github/workflows/sign-image.yaml@<full sha> # vX.Y.Z
     with:
-      image: ghcr.io/krohmag-industries/app            # no tag; under the caller's owner
+      image: ghcr.io/krohmag-industries/app            # no tag; the caller's repository name, optionally followed by - or /
       digest: ${{ needs.build.outputs.digest }}
       base: ghcr.io/krohmag-industries/app-base@sha256:...   # the base the build used, pinned by digest
       base-signer: '^https://github\.com/krohmag-industries/app/\.github/workflows/base\.yaml@refs/heads/main$'
-      tag: main                                        # optional: moved only after everything verified
+      tag: main                                        # optional: moved only after everything verified, and only from refs/heads/main
       sbom-packages: 'git ca-certificates'             # optional: names the SBOM must list
 ```
 
@@ -45,7 +45,11 @@ How the job holds the signing identity (`id-token: write`) safely:
 - **No caller code runs and the caller's repository is not checked out.** The caller hands over an image, a digest and a base;
   the SBOM is syft's scan of the registry and the provenance is built from GitHub's environment, never taken from the build.
 - Inputs reach shell only through `env:` after regexp validation; none is a path or a ref. `base-signer` is limited to one
-  literal subject (no wildcards or alternation).
+  literal subject: the anchors, letters, digits and `_ : / @ -`, and `\.`. `image` must be the caller's repository name (or
+  start with it plus `-` or `/`). `tag` may not be one of cosign's own tags (`sha256-<digest>`, `.sig`, `.att`, `.sbom`) and is
+  moved only from `refs/heads/main`.
+- The step that reads the pushed image (`predicates`: crane, syft, cosign) runs without the OIDC request variables, so only the
+  signing step can mint a token.
 - Every verification runs twice: against this run's own workflow exactly, and against the pattern consumers use, with the
   caller's repository, ref and commit, so a pattern that doesn't match fails here and not in a cluster.
 
@@ -56,3 +60,16 @@ run needs a package to push to; see kroh-lab `docs/decisions.md`. The caller's b
 
 Callers must pin a full SHA (the org requires it). The subject carries that SHA, so any `ci` commit satisfies a policy that
 matches `[0-9a-f]{40}`: the control is the callers' reviewed pin PRs.
+
+Limits to know:
+
+- The signature plus the policy's repository and ref checks are the trust. The image's revision label, the layer check and
+  `sbom-packages` are sanity checks: the build wrote the image, so a compromised build can make them pass. The provenance records
+  what GitHub's environment says (commit, base, workflow, run); it is not build provenance.
+- Two quick pushes can finish out of order and the older run can move `tag` back to an older, still-signed digest. Give the
+  caller's sign job a `concurrency` group (`cancel-in-progress: false`) if that matters.
+- Keyless signatures go to Sigstore's public Rekor log: the caller's repository name, ref, commit and run URL become public, even
+  for a private repository.
+- Tools are pinned by version (`.mise.sign.toml`, the mise release) but there is no lock file, and the mise checksum comes from
+  the same release as the binary. A `mise.lock` with `MISE_LOCKED=1`, and the mise sha256 beside `MISE_VERSION`, are the next
+  hardening.

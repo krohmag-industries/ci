@@ -28,7 +28,7 @@ on:
   workflow_call:
     inputs:
       image:
-        description: 'The image repository without a tag or digest, under ghcr.io/<the caller''s owner>/.'
+        description: 'The image repository without a tag or digest: ghcr.io/<owner>/<the caller''s repository name>, optionally followed by - or / and more.'
         type: string
         required: true
       digest:
@@ -74,6 +74,7 @@ jobs:
       TAG: ${{ inputs.tag }}
       SBOM_PACKAGES: ${{ inputs.sbom-packages }}
       OWNER: ${{ github.repository_owner }}
+      REPO: ${{ github.repository }}
       # renovate: datasource=github-releases depName=jdx/mise
       MISE_VERSION: v2026.10.22
       MISE_ENV: sign # .mise.sign.toml: cosign, syft, crane, jq
@@ -82,20 +83,27 @@ jobs:
         run: |
           fail() { echo "::error::$*"; exit 1; }
           owner=$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")
+          repo=$(tr "[:upper:]" "[:lower:]" <<<"${REPO#*/}")
           image_re='^ghcr\.io/[a-z0-9._-]+(/[a-z0-9._-]+)+$'
-          [[ $IMAGE =~ $image_re && $IMAGE != *..* && $IMAGE == "ghcr.io/${owner}/"* ]] ||
-            fail "image must be ghcr.io/${owner}/<name> without a tag or digest"
+          [[ $IMAGE =~ $image_re && $IMAGE != *..* && ( $IMAGE == "ghcr.io/${owner}/${repo}" || $IMAGE == "ghcr.io/${owner}/${repo}"[-/]* ) ]] ||
+            fail "image must be ghcr.io/${owner}/${repo}, or start with ${repo}- or ${repo}/, without a tag or digest"
           [[ $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]] || fail "digest is not a sha256 digest"
           base_re='^ghcr\.io/[a-z0-9._-]+(/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$'
           [[ $BASE =~ $base_re && ${BASE%@*} != *..* && $BASE == "ghcr.io/${owner}/"* ]] ||
             fail "base must be ghcr.io/${owner}/<name>@sha256:<digest>"
-          signer_re='^[A-Za-z0-9_^$:/@.\\-]+$'
+          # One literal subject: ^ and $ at the ends, and between them only [A-Za-z0-9_:/@-] and the escaped dot (Go RE2 also
+          # gives \w, \d, \Q and an unescaped . a meaning).
           signer_body=${BASE_SIGNER#^}
           signer_body=${signer_body%\$}
-          [[ $BASE_SIGNER =~ $signer_re && $BASE_SIGNER == '^https://github\.com/'"${owner}"'/'* && $BASE_SIGNER == *'$' &&
-            $signer_body != *'^'* && $signer_body != *'$'* ]] ||
-            fail "base-signer must be an anchored pattern starting ^https://github\\.com/${owner}/ with no metacharacters but \\."
+          signer_literal=${signer_body//\\./}
+          literal_re='^[A-Za-z0-9_:/@-]+$'
+          [[ $BASE_SIGNER == '^https://github\.com/'"${owner}"'/'* && $BASE_SIGNER == *'$' && $signer_literal =~ $literal_re ]] ||
+            fail "base-signer must be ^https://github\\.com/${owner}/...\$ with only letters, digits, _ : / @ - and \\. between the anchors"
           [[ -z $TAG || $TAG =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]] || fail "tag is not a valid tag name"
+          # Cosign's own tags (sha256-<digest>.sig|.att|.sbom) are not ours to move, and a moving tag may only move from main,
+          # the one ref Kyverno trusts.
+          [[ -z $TAG || ( $TAG != sha256-* && $TAG != *.sig && $TAG != *.att && $TAG != *.sbom ) ]] || fail "tag is reserved for cosign"
+          [[ -z $TAG || $GITHUB_REF = refs/heads/main ]] || fail "tag may only be moved from refs/heads/main (this run is $GITHUB_REF)"
           [[ -z $SBOM_PACKAGES || $SBOM_PACKAGES =~ ^[A-Za-z0-9._+\ -]+$ ]] || fail "sbom-packages is not a list of package names"
 
       # The called workflow's own reference and commit are in the OIDC token and nowhere else (github.job_workflow_sha was
@@ -161,7 +169,10 @@ jobs:
       # not signed by the caller's main, before anything is signed. The SBOM is syft's scan of the pushed digest and the
       # provenance comes from GitHub's environment, never from the build.
       - name: Check the image and write the SBOM and provenance
-        run: .sign-image/scripts/sign-image/predicates "${IMAGE}@${DIGEST}" "$BASE" "$BASE_SIGNER" "$RUNNER_TEMP/predicates"
+        # Parses the pushed image's content, so without the OIDC request variables: only `sign` may mint a token.
+        run: |
+          env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            .sign-image/scripts/sign-image/predicates "${IMAGE}@${DIGEST}" "$BASE" "$BASE_SIGNER" "$RUNNER_TEMP/predicates"
 
       - name: Sign, attest and verify (keyless)
         run: .sign-image/scripts/sign-image/sign "${IMAGE}@${DIGEST}" "$RUNNER_TEMP/predicates"

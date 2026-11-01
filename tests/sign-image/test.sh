@@ -131,14 +131,19 @@ check "sign: missing predicates sign nothing" '[ $rc != 0 ] && [ ! -e "$t/cosign
 step() { yq ".jobs.sign.steps[] | select(.name == \"$1\") | .run" "$workflow"; }
 validate_inputs() { # [VAR=VALUE]...
   rc=0
-  env OWNER=krohmag-industries IMAGE="$image" DIGEST="$digest" BASE="$base" BASE_SIGNER="$signer" TAG=main SBOM_PACKAGES="git ca-certificates" "$@" \
+  env OWNER=krohmag-industries REPO=krohmag-industries/app GITHUB_REF=refs/heads/main IMAGE="$image" DIGEST="$digest" BASE="$base" BASE_SIGNER="$signer" TAG=main SBOM_PACKAGES="git ca-certificates" "$@" \
     bash -c "$(step 'Validate the inputs')" >"$t/log" 2>&1 || rc=$?
 }
 validate_inputs; check "inputs: a good call is accepted" '[ $rc = 0 ]'
 validate_inputs OWNER=Krohmag-Industries; check "inputs: the owner compares lower-cased" '[ $rc = 0 ]'
+validate_inputs IMAGE=ghcr.io/krohmag-industries/app-extra; check "inputs: an image named app-<x> is accepted" '[ $rc = 0 ]'
+validate_inputs IMAGE=ghcr.io/krohmag-industries/app/sub; check "inputs: an image named app/<x> is accepted" '[ $rc = 0 ]'
+validate_inputs TAG=main GITHUB_REF=refs/pull/1/merge TAG=; check "inputs: no tag, any ref" '[ $rc = 0 ]'
 validate_inputs TAG= SBOM_PACKAGES=; check "inputs: tag and sbom-packages are optional" '[ $rc = 0 ]'
 bad() { validate_inputs "$1"; check "inputs: refused $2" '[ $rc != 0 ]'; }
 bad "IMAGE=ghcr.io/other-org/app" "an image in another owner's namespace"
+bad "IMAGE=ghcr.io/krohmag-industries/other-repo" "an image of another repository"
+bad "IMAGE=ghcr.io/krohmag-industries/application" "an image that only starts with the repository name"
 bad "IMAGE=$image:latest" "an image with a tag"
 bad "IMAGE=ghcr.io/krohmag-industries/../other/app" "an image path with .."
 bad "IMAGE=docker.io/krohmag-industries/app" "another registry"
@@ -150,7 +155,15 @@ bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/app/x|.*$' "a base-sign
 bad 'BASE_SIGNER=^https://github\.com/other-org/app/x$' "a base-signer for another owner"
 bad 'BASE_SIGNER=https://github\.com/krohmag-industries/app/x$' "a base-signer that is not anchored at the start"
 bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/app/x' "a base-signer that is not anchored at the end"
+bad 'BASE_SIGNER=^https://github.com/krohmag-industries/app/x$' "a base-signer with an unescaped dot"
+bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/\w\w\w/x$' "a base-signer with a character class"
+bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/\Qx$' "a base-signer with a quote escape"
 bad 'TAG=a b' "a tag with a space"
+bad "TAG=sha256-$(d 1).sig" "cosign's signature tag"
+bad "TAG=sha256-$(d 1)" "cosign's tag prefix"
+bad 'TAG=x.att' "an attestation tag suffix"
+bad 'TAG=x.sbom' "an sbom tag suffix"
+validate_inputs TAG=main GITHUB_REF=refs/pull/1/merge; check "inputs: refused a tag moved from a pull request ref" '[ $rc != 0 ] && grep -q "refs/heads/main" "$t/log"'
 bad 'TAG=$(id)' "a tag with a command substitution"
 bad 'SBOM_PACKAGES=git;id' "sbom-packages with a shell metacharacter"
 bad 'SBOM_PACKAGES=git*' "sbom-packages with a glob"
