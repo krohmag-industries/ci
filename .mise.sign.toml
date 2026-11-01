@@ -1,0 +1,7 @@
+# Tools the sign-image workflow runs beside the signing identity: `MISE_ENV=sign mise install <tool>...`. Kept apart from
+# .mise.toml (the lint tools) so this repo's own validate job doesn't install them. Renovate's mise manager keeps these current.
+[tools]
+"aqua:sigstore/cosign" = "3.1.4"
+"aqua:anchore/syft" = "1.55.0"
+"aqua:google/go-containerregistry" = "0.22.1"
+"aqua:jqlang/jq" = "1.8.2"

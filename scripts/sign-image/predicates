@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Usage: scripts/sign-image/predicates IMAGE@DIGEST BASE@DIGEST BASE_SIGNER_REGEXP OUT_DIR
+# Writes OUT_DIR/sbom.spdx.json and OUT_DIR/provenance.json for an image a repo's build job has pushed, and checks
+# the image first. Run by the sign-image workflow before anything is signed, so a refused image gets no signature.
+# The predicates must not come from the build: the SBOM is syft's scan of the pushed digest in the registry and the
+# provenance is scripts/sign-image/provenance (GitHub's environment). Refuses an image whose revision label is not
+# GITHUB_SHA, that is not linux/amd64, whose base label is not BASE, whose layers are not BASE's plus exactly one, or
+# whose BASE does not carry a keyless signature matching BASE_SIGNER_REGEXP from this repository's main.
+# Needs cosign, crane, syft and jq; registry credentials in the Docker config (`crane auth login`); GITHUB_SHA and
+# GITHUB_REPOSITORY. SBOM_PACKAGES (space separated) names packages the SBOM must list.
+set -euo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+die() { echo "sign-image/predicates: $*" >&2; exit 1; }
+ref="${1:?usage: predicates IMAGE@DIGEST BASE@DIGEST BASE_SIGNER_REGEXP OUT_DIR}"
+base="${2:?usage: predicates IMAGE@DIGEST BASE@DIGEST BASE_SIGNER_REGEXP OUT_DIR}"
+signer="${3:?usage: predicates IMAGE@DIGEST BASE@DIGEST BASE_SIGNER_REGEXP OUT_DIR}"
+out="${4:?usage: predicates IMAGE@DIGEST BASE@DIGEST BASE_SIGNER_REGEXP OUT_DIR}"
+[[ $ref =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]] || die "not a digest reference: $ref"
+[[ $base =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]] || die "not a digest reference: $base"
+sha="${GITHUB_SHA:?GITHUB_SHA must name the commit being published}"
+repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must name the repository being published}"
+
+config=$(crane config "$ref")
+labels() { jq -r --arg k "$1" '.config.Labels[$k] // empty' <<<"$config"; }
+[ "$(labels org.opencontainers.image.revision)" = "$sha" ] || die "the image's revision label is not $sha"
+[ "$(jq -r '.architecture + "/" + .os' <<<"$config")" = amd64/linux ] || die "the image is not linux/amd64"
+
+# The base the image says it was built on must be the base the caller named, and its manifest's layers must be the
+# image's first layers with exactly one more on top. The label is the image's claim; the layers are the check.
+[ "$(labels org.opencontainers.image.base.name)" = "${base%@*}" ] || die "the image's base name label is not ${base%@*}"
+[ "$(labels org.opencontainers.image.base.digest)" = "${base#*@}" ] || die "the image's base digest label is not ${base#*@}"
+image_layers=$(crane manifest "$ref" | jq -c '[.layers[].digest]')
+base_layers=$(crane manifest "$base" | jq -c '[.layers[].digest]')
+jq -en --argjson i "$image_layers" --argjson b "$base_layers" \
+  '($i | length) == ($b | length) + 1 and $i[:($b | length)] == $b' >/dev/null ||
+  die "the image's layers are not $base plus one layer"
+
+# Only this repository's main may have signed the base: a base signed from another branch or repository is refused.
+cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp "$signer" \
+  --certificate-github-workflow-repository "$repo" \
+  --certificate-github-workflow-ref refs/heads/main \
+  "$base" >/dev/null || die "$base has no signature from $repo's main matching $signer"
+
+mkdir -p "$out"
+echo "==> SBOM from the registry"
+syft scan "registry:$ref" --quiet --source-name "${repo#*/}" --source-version "$sha" -o "spdx-json=$out/sbom.spdx.json"
+echo "==> provenance"
+"$here/provenance" "$base" >"$out/provenance.json"
+"$here/attestations" "$out"

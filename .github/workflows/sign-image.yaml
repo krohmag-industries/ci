@@ -1,0 +1,187 @@
+# Signs an image a repo's build job has pushed, attests its SBOM and provenance, and (optionally) moves a tag to it.
+# Called as a job:
+#
+#   sign:
+#     needs: build
+#     permissions: {contents: read, packages: write, id-token: write}
+#     uses: krohmag-industries/ci/.github/workflows/sign-image.yaml@<full sha> # vX.Y.Z
+#     with: {image: ghcr.io/krohmag-industries/app, digest: "${{ needs.build.outputs.digest }}", base: ..., base-signer: ...}
+#
+# The signature's identity is this file: the Fulcio certificate's subject is
+# https://github.com/krohmag-industries/ci/.github/workflows/sign-image.yaml@<the SHA the caller wrote>, and its
+# extensions name the caller (repository, ref, commit). Consumers (kroh-lab's Kyverno policies, `cosign verify`) match
+# the subject with a pattern and pin the caller with --certificate-github-workflow-repository and -ref; see
+# kroh-lab docs/decisions.md, "Signing identity, tested". Nothing here is secret: ci is public.
+#
+# The scripts and tool pins come from this repository at the SAME commit as this file, not from the caller:
+# `uses: ./` and a plain checkout both resolve to the caller's workspace, and a workflow cannot name its own SHA.
+# The only place the called workflow's commit is available is the job's OIDC token (`job_workflow_sha`), so the job
+# reads it from there, refuses anything but a full-SHA reference to this file, and checks ci out at that commit. The
+# code that runs is then exactly the code the certificate names. No code from the caller runs in this job, and the
+# caller's repository is not checked out: the caller's build job (which never holds `id-token`) hands over only the
+# image, its digest and its base, and everything attested is rebuilt from the registry and GitHub's environment.
+#
+# Inputs are untrusted: they reach shell only through env, are validated first, and none is a path or a ref.
+name: sign-image
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: 'The image repository without a tag or digest, under ghcr.io/<the caller''s owner>/.'
+        type: string
+        required: true
+      digest:
+        description: 'The digest the build pushed (sha256:...). This exact digest is signed.'
+        type: string
+        required: true
+      base:
+        description: 'The base image the build used, pinned by digest (ghcr.io/<owner>/name@sha256:...).'
+        type: string
+        required: true
+      base-signer:
+        description: >-
+          Anchored regexp for the certificate subject the base must carry (a signature from the caller repository''s
+          main). Only ^, $, letters, digits and - _ : / @ \. are allowed, so it names one subject.
+        type: string
+        required: true
+      tag:
+        description: 'Optional tag to point at the image once its signature and attestations have verified (e.g. main).'
+        type: string
+        required: false
+        default: ''
+      sbom-packages:
+        description: 'Optional space-separated package names the SBOM must list, so a scan that read nothing is refused.'
+        type: string
+        required: false
+        default: ''
+
+permissions: {}
+
+jobs:
+  sign:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write # push the signature and attestations, and move the tag
+      id-token: write # cosign's keyless signatures: a Fulcio certificate for this workflow's identity
+    env:
+      IMAGE: ${{ inputs.image }}
+      DIGEST: ${{ inputs.digest }}
+      BASE: ${{ inputs.base }}
+      BASE_SIGNER: ${{ inputs.base-signer }}
+      TAG: ${{ inputs.tag }}
+      SBOM_PACKAGES: ${{ inputs.sbom-packages }}
+      OWNER: ${{ github.repository_owner }}
+      # renovate: datasource=github-releases depName=jdx/mise
+      MISE_VERSION: v2026.10.22
+      MISE_ENV: sign # .mise.sign.toml: cosign, syft, crane, jq
+    steps:
+      - name: Validate the inputs
+        run: |
+          fail() { echo "::error::$*"; exit 1; }
+          owner=$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")
+          image_re='^ghcr\.io/[a-z0-9._-]+(/[a-z0-9._-]+)+$'
+          [[ $IMAGE =~ $image_re && $IMAGE != *..* && $IMAGE == "ghcr.io/${owner}/"* ]] ||
+            fail "image must be ghcr.io/${owner}/<name> without a tag or digest"
+          [[ $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]] || fail "digest is not a sha256 digest"
+          base_re='^ghcr\.io/[a-z0-9._-]+(/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$'
+          [[ $BASE =~ $base_re && ${BASE%@*} != *..* && $BASE == "ghcr.io/${owner}/"* ]] ||
+            fail "base must be ghcr.io/${owner}/<name>@sha256:<digest>"
+          signer_re='^[A-Za-z0-9_^$:/@.\\-]+$'
+          signer_body=${BASE_SIGNER#^}
+          signer_body=${signer_body%\$}
+          [[ $BASE_SIGNER =~ $signer_re && $BASE_SIGNER == '^https://github\.com/'"${owner}"'/'* && $BASE_SIGNER == *'$' &&
+            $signer_body != *'^'* && $signer_body != *'$'* ]] ||
+            fail "base-signer must be an anchored pattern starting ^https://github\\.com/${owner}/ with no metacharacters but \\."
+          [[ -z $TAG || $TAG =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]] || fail "tag is not a valid tag name"
+          [[ -z $SBOM_PACKAGES || $SBOM_PACKAGES =~ ^[A-Za-z0-9._+\ -]+$ ]] || fail "sbom-packages is not a list of package names"
+
+      # The called workflow's own reference and commit are in the OIDC token and nowhere else (github.job_workflow_sha was
+      # empty when tested, 2026-11-01). The token is minted for this read only, with the default audience (the owner's
+      # URL, not Sigstore's), kept in a 0600 file and deleted; only the two claims are kept, and only if they are a full-SHA
+      # reference to this file.
+      - name: Read this workflow's commit from the OIDC claims
+        run: |
+          umask 077
+          dir=$(mktemp -d "$RUNNER_TEMP/oidc.XXXXXX")
+          trap 'rm -rf "$dir"' EXIT
+          [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || { echo "::error::no id-token permission"; exit 1; }
+          printf 'header = "Authorization: bearer %s"\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" >"$dir/curl.conf"
+          curl -fsS --retry 3 -K "$dir/curl.conf" "$ACTIONS_ID_TOKEN_REQUEST_URL" -o "$dir/response.json"
+          jq -r '.value' "$dir/response.json" | while IFS= read -r token; do echo "::add-mask::$token"; done
+          claims=$(jq -r '.value | split(".")[1] | gsub("-"; "+") | gsub("_"; "/") | . + (("=" * ((4 - (length % 4)) % 4)) // "")
+            | @base64d | fromjson | [.job_workflow_ref, .job_workflow_sha] | @tsv' "$dir/response.json")
+          IFS=$'\t' read -r ref sha <<<"$claims"
+          ref_re='^krohmag-industries/ci/\.github/workflows/sign-image\.yaml@([0-9a-f]{40})$'
+          if ! [[ $ref =~ $ref_re ]] || [ "${BASH_REMATCH[1]}" != "$sha" ]; then
+            echo "::error::sign-image must be called by a full commit SHA (job_workflow_ref='${ref}', job_workflow_sha='${sha}')"
+            exit 1
+          fi
+          echo "sign-image.yaml@${sha}"
+          { echo "JOB_WORKFLOW_REF=${ref}"; echo "JOB_WORKFLOW_SHA=${sha}"; } >>"$GITHUB_ENV"
+
+      - name: Check out ci at this workflow's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: krohmag-industries/ci
+          ref: ${{ env.JOB_WORKFLOW_SHA }}
+          path: .sign-image
+          persist-credentials: false
+
+      - name: Check the checkout
+        run: |
+          [ "$(git -C .sign-image rev-parse HEAD)" = "$JOB_WORKFLOW_SHA" ] || { echo "::error::checked out the wrong commit"; exit 1; }
+          [ -x .sign-image/scripts/sign-image/predicates ] && [ -x .sign-image/scripts/sign-image/sign ] ||
+            { echo "::error::the sign-image scripts are missing at ${JOB_WORKFLOW_SHA}"; exit 1; }
+
+      - name: Install mise
+        uses: ./.sign-image/actions/setup-mise
+        with:
+          version: ${{ env.MISE_VERSION }}
+
+      # Only the signing tools, by name: the lint tools in .mise.toml are not needed here.
+      - name: Install cosign, syft, crane and jq (pinned)
+        working-directory: .sign-image
+        run: |
+          mise trust --yes
+          mise install aqua:sigstore/cosign aqua:anchore/syft aqua:google/go-containerregistry aqua:jqlang/jq
+          for tool in cosign syft crane jq; do dirname "$(mise which "$tool")" >> "$GITHUB_PATH"; done
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # avoids GitHub API rate limits on downloads
+
+      - name: Log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: crane auth login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+
+      # Refuses an image whose revision label is not this commit, whose layers are not its base plus one, or whose base is
+      # not signed by the caller's main, before anything is signed. The SBOM is syft's scan of the pushed digest and the
+      # provenance comes from GitHub's environment, never from the build.
+      - name: Check the image and write the SBOM and provenance
+        run: .sign-image/scripts/sign-image/predicates "${IMAGE}@${DIGEST}" "$BASE" "$BASE_SIGNER" "$RUNNER_TEMP/predicates"
+
+      - name: Sign, attest and verify (keyless)
+        run: .sign-image/scripts/sign-image/sign "${IMAGE}@${DIGEST}" "$RUNNER_TEMP/predicates"
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${IMAGE##*/}"
+            echo
+            echo "Pin it as \`${IMAGE}:${GITHUB_SHA}@${DIGEST}\`."
+            echo "The digest is the image itself; its signature, SBOM and provenance are attached to it in the registry"
+            echo "(\`cosign verify\` and \`cosign verify-attestation --type spdxjson|slsaprovenance1\`)."
+            echo "Signed by \`${JOB_WORKFLOW_REF}\` for \`${GITHUB_REPOSITORY}\` at \`${GITHUB_REF}\`."
+            echo
+            echo "signed and attested ${IMAGE}@${DIGEST}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A registry-side copy of the manifest, added only after the signature and attestations verified, so the tag never
+      # names an unsigned digest. Consumers still verify the signature themselves: anyone able to push a tag could move it.
+      - name: Point the tag at the signed image
+        if: inputs.tag != ''
+        run: |
+          crane tag "${IMAGE}@${DIGEST}" "$TAG"
+          echo "tagged ${IMAGE}:${TAG}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Usage: scripts/sign-image/sign IMAGE@DIGEST PREDICATES_DIR
+# Signs the image keyless, attests its SBOM and provenance, and verifies each result as a consumer would. Every
+# verification runs twice: against this run's own called workflow (JOB_WORKFLOW_REF, from the OIDC claims) exactly,
+# and against the pattern consumers' policies use (the sign-image workflow at any full SHA) with the caller's
+# repository, ref and commit, so a pattern that does not match fails here and not in production.
+# Needs cosign; GITHUB_REPOSITORY, GITHUB_REF, GITHUB_SHA and JOB_WORKFLOW_REF.
+set -euo pipefail
+ref="${1:?usage: sign IMAGE@DIGEST PREDICATES_DIR}"
+preds="${2:?usage: sign IMAGE@DIGEST PREDICATES_DIR}"
+[[ $ref =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]] || { echo "not a digest reference: $ref" >&2; exit 1; }
+[ -s "$preds/sbom.spdx.json" ] && [ -s "$preds/provenance.json" ] || { echo "no predicates in $preds" >&2; exit 1; }
+repo="${GITHUB_REPOSITORY:?}"
+git_ref="${GITHUB_REF:?}"
+sha="${GITHUB_SHA:?}"
+self="https://github.com/${JOB_WORKFLOW_REF:?}"
+pattern='^https://github\.com/krohmag-industries/ci/\.github/workflows/sign-image\.yaml@[0-9a-f]{40}$'
+flags=(
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  --certificate-github-workflow-repository "$repo"
+  --certificate-github-workflow-ref "$git_ref"
+  --certificate-github-workflow-sha "$sha"
+)
+
+verify() { # verify|verify-attestation [--type T]: both identity forms
+  local cmd=$1
+  shift
+  cosign "$cmd" "$@" "${flags[@]}" --certificate-identity "$self" "$ref" >/dev/null
+  cosign "$cmd" "$@" "${flags[@]}" --certificate-identity-regexp "$pattern" "$ref" >/dev/null
+}
+
+cosign sign --yes "$ref"
+verify verify
+for type in spdxjson slsaprovenance1; do
+  case $type in
+    spdxjson) predicate="$preds/sbom.spdx.json" ;;
+    slsaprovenance1) predicate="$preds/provenance.json" ;;
+  esac
+  cosign attest --yes --type "$type" --predicate "$predicate" "$ref"
+  verify verify-attestation --type "$type"
+done
