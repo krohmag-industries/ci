@@ -1,0 +1,89 @@
+#!/usr/bin/env -S python3 -I
+"""Fail unless every entry in the mise lockfiles can only fetch what its tool's own releases publish.
+
+`mise install --locked` trusts a lockfile entry as written: it installs whatever `url` (or, when that 404s, `url_api`)
+and `checksum` the lock holds, over http and from any host, installs an entry with no checksum, and skips the
+provenance check once a checksum is present. The lock is a generated file nobody reads in review, so this lint pins
+what a legitimate `mise lock` writes: the tool's own backend, an https URL on the tool's own release path, a
+checksum on every platform, and `provenance` where upstream publishes it. It also refuses any other mise config or
+lock file, which `mise install --locked` would load. Copied from krohmag-industries/blaster (scripts/check-mise-locks), narrowed to
+the sign-image tools (mise.sign.lock). Run by scripts/validate.
+"""
+import re
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+LOCKS = ("mise.sign.lock",)
+CONFIGS = (".mise.toml", ".mise.sign.toml")
+# Tools whose upstream publishes provenance (cosign, github-attestations or minisign): the lock must record it.
+PROVENANCE = {
+    "aqua:sigstore/cosign",
+    "aqua:anchore/syft",
+    "aqua:jqlang/jq",
+}
+# Tools not downloaded from github.com/<owner>/<repo>/releases/download/: none here.
+DOWNLOAD_BASE = {}
+# Tools with no URL or checksum in the lock: none here.
+NO_DOWNLOAD = set()
+BACKEND = {}
+# Keys mise reads; anything else (a nested `platforms` table, say) is a way to hide an entry from this lint.
+ENTRY_KEYS = {"version", "backend", "specifiers", "options"}
+BLOCK_KEYS = {"checksum", "checksum_source", "url", "url_api", "provenance"}
+# Two path segments of plain characters: a tag and an asset name. mise strips tabs and newlines and resolves dot
+# segments before it requests a URL, so an allowlist is the only safe check.
+SEGMENT = r"(?!\.{1,2}/|\.{1,2}$)[A-Za-z0-9._+~-]+"
+
+errors = []
+
+for lock in LOCKS:
+    with open(ROOT / lock, "rb") as f:
+        lock_data = tomllib.load(f)
+    extra = set(lock_data) - {"lockfile_version", "tools"}
+    if extra:
+        errors.append(f"{lock}: unexpected top-level keys {sorted(extra)}")
+    tools = lock_data.get("tools", {})
+    for name, entries in tools.items():
+        repo = name.removeprefix("aqua:")
+        base = DOWNLOAD_BASE.get(name, f"https://github.com/{repo}/releases/download")
+        url_re = re.compile(re.escape(base) + rf"/{SEGMENT}/{SEGMENT}")
+        for entry in entries:
+            if entry.get("backend") != BACKEND.get(name, name):
+                errors.append(f"{lock}: {name} has backend {entry.get('backend')!r}")
+            platforms = {k: v for k, v in entry.items() if k.startswith("platforms.")}
+            for key in entry.keys() - ENTRY_KEYS - platforms.keys():
+                errors.append(f"{lock}: {name} has unexpected key {key!r}")
+            if not platforms and name not in NO_DOWNLOAD:
+                errors.append(f"{lock}: {name} has no platform entries")
+            for platform, block in platforms.items():
+                where = f"{lock}: {name} {platform}"
+                for key in block.keys() - BLOCK_KEYS:
+                    errors.append(f"{where}: unexpected key {key!r}")
+                if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(block.get("checksum", ""))):
+                    errors.append(f"{where}: no sha256 checksum")
+                if not url_re.fullmatch(str(block.get("url", ""))):
+                    errors.append(f"{where}: url is not {base}/<tag>/<asset>")
+                if "url_api" in block and not re.fullmatch(
+                    rf"https://api\.github\.com/repos/{re.escape(repo)}/releases/assets/[0-9]+", str(block["url_api"])
+                ):
+                    errors.append(f"{where}: url_api is not this repo's GitHub release asset API")
+                if name in PROVENANCE and not block.get("provenance"):
+                    errors.append(f"{where}: no provenance")
+
+# mise loads (and locks) config files from several places; only CONFIGS and LOCKS may exist.
+tracked = subprocess.run(
+    ["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True, check=True
+).stdout.splitlines()
+for path in tracked:
+    is_lock = re.search(r"(^|/)\.?mise(\.[^/]+)?\.lock$", path)
+    is_config = re.search(
+        r"(^|/)(\.?mise([./][^/]*)?\.toml|\.mise/|\.config/mise|mise/config|\.miserc|\.tool-versions$)", path
+    )
+    if (is_lock and path not in LOCKS) or (is_config and path not in CONFIGS):
+        errors.append(f"{path}: mise would load this file; only {', '.join(CONFIGS + LOCKS)} are allowed")
+
+if errors:
+    print("\n".join(errors), file=sys.stderr)
+    sys.exit(1)
