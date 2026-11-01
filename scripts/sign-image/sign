@@ -31,11 +31,7 @@ verify() { # verify|verify-attestation [--type T]: both identity forms
 
 cosign sign --yes "$ref"
 verify verify
-for type in spdxjson slsaprovenance1; do
-  case $type in
-    spdxjson) predicate="$preds/sbom.spdx.json" ;;
-    slsaprovenance1) predicate="$preds/provenance.json" ;;
-  esac
-  cosign attest --yes --type "$type" --predicate "$predicate" "$ref"
-  verify verify-attestation --type "$type"
+for attestation in spdxjson:sbom.spdx.json slsaprovenance1:provenance.json; do
+  cosign attest --yes --type "${attestation%%:*}" --predicate "$preds/${attestation#*:}" "$ref"
+  verify verify-attestation --type "${attestation%%:*}"
 done

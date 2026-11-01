@@ -6,8 +6,9 @@
 # provenance is scripts/sign-image/provenance (GitHub's environment). Refuses an image whose revision label is not
 # GITHUB_SHA, that is not linux/amd64, whose base label is not BASE, whose layers are not BASE's plus exactly one, or
 # whose BASE does not carry a keyless signature matching BASE_SIGNER_REGEXP from this repository's main.
-# Needs cosign, crane, syft and jq; registry credentials in the Docker config (`crane auth login`); GITHUB_SHA and
-# GITHUB_REPOSITORY. SBOM_PACKAGES (space separated) names packages the SBOM must list.
+# Then runs scripts/sign-image/attestations on what it wrote. Needs cosign, crane, syft and jq; registry credentials in
+# the Docker config (`crane auth login`); GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_REF, GITHUB_WORKFLOW_REF and
+# JOB_WORKFLOW_REF (for the provenance). SBOM_PACKAGES (space separated) names packages the SBOM must list.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 die() { echo "sign-image/predicates: $*" >&2; exit 1; }

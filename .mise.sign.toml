@@ -4,4 +4,4 @@
 "aqua:sigstore/cosign" = "3.1.4"
 "aqua:anchore/syft" = "1.55.0"
 "aqua:google/go-containerregistry" = "0.22.1"
-"aqua:jqlang/jq" = "1.8.2"
+"aqua:jqlang/jq" = "1.8.2" # keep equal to .mise.toml's

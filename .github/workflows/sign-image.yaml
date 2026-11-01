@@ -41,7 +41,7 @@ on:
         required: true
       base-signer:
         description: >-
-          Anchored regexp for the certificate subject the base must carry (a signature from the caller repository''s
+          Anchored regexp for the certificate subject the base must carry (a signature from the caller repository's
           main). Only ^, $, letters, digits and - _ : / @ \. are allowed, so it names one subject.
         type: string
         required: true
@@ -110,7 +110,9 @@ jobs:
           [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || { echo "::error::no id-token permission"; exit 1; }
           printf 'header = "Authorization: bearer %s"\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" >"$dir/curl.conf"
           curl -fsS --retry 3 -K "$dir/curl.conf" "$ACTIONS_ID_TOKEN_REQUEST_URL" -o "$dir/response.json"
-          jq -r '.value' "$dir/response.json" | while IFS= read -r token; do echo "::add-mask::$token"; done
+          echo "::add-mask::$(jq -r .value "$dir/response.json")"
+          # The runner's own jq (the pinned one isn't installed yet). A JWT payload is unpadded base64url: restore the
+          # alphabet and the padding (`"=" * 0` is null in jq 1.7 and "" in 1.8, hence the `// ""`).
           claims=$(jq -r '.value | split(".")[1] | gsub("-"; "+") | gsub("_"; "/") | . + (("=" * ((4 - (length % 4)) % 4)) // "")
             | @base64d | fromjson | [.job_workflow_ref, .job_workflow_sha] | @tsv' "$dir/response.json")
           IFS=$'\t' read -r ref sha <<<"$claims"
@@ -130,11 +132,10 @@ jobs:
           path: .sign-image
           persist-credentials: false
 
+      # Belt and braces: what runs must be the commit the certificate will name.
       - name: Check the checkout
         run: |
           [ "$(git -C .sign-image rev-parse HEAD)" = "$JOB_WORKFLOW_SHA" ] || { echo "::error::checked out the wrong commit"; exit 1; }
-          [ -x .sign-image/scripts/sign-image/predicates ] && [ -x .sign-image/scripts/sign-image/sign ] ||
-            { echo "::error::the sign-image scripts are missing at ${JOB_WORKFLOW_SHA}"; exit 1; }
 
       - name: Install mise
         uses: ./.sign-image/actions/setup-mise
@@ -170,12 +171,9 @@ jobs:
           {
             echo "### ${IMAGE##*/}"
             echo
-            echo "Pin it as \`${IMAGE}:${GITHUB_SHA}@${DIGEST}\`."
+            echo "Signed and attested \`${IMAGE}@${DIGEST}\` by \`${JOB_WORKFLOW_REF}\` for \`${GITHUB_REPOSITORY}\` at \`${GITHUB_REF}\`."
             echo "The digest is the image itself; its signature, SBOM and provenance are attached to it in the registry"
             echo "(\`cosign verify\` and \`cosign verify-attestation --type spdxjson|slsaprovenance1\`)."
-            echo "Signed by \`${JOB_WORKFLOW_REF}\` for \`${GITHUB_REPOSITORY}\` at \`${GITHUB_REF}\`."
-            echo
-            echo "signed and attested ${IMAGE}@${DIGEST}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       # A registry-side copy of the manifest, added only after the signature and attestations verified, so the tag never

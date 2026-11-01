@@ -49,8 +49,10 @@ How the job holds the signing identity (`id-token: write`) safely:
 - Every verification runs twice: against this run's own workflow exactly, and against the pattern consumers use, with the
   caller's repository, ref and commit, so a pattern that doesn't match fails here and not in a cluster.
 
-Test: `tests/sign-image/test.sh` (fake crane, cosign, syft and curl), run by `scripts/validate`. A real run needs a package to push to; see
-kroh-lab `docs/decisions.md`.
+Test: `tests/sign-image/test.sh` (fake crane, cosign, syft and curl), run by `scripts/validate`, covers the scripts and the
+workflow's input and OIDC-claim steps. The checkout, tool install, registry login, summary and tag steps run only for real: a
+run needs a package to push to; see kroh-lab `docs/decisions.md`. The caller's build is expected to have pushed
+`<image>:<commit sha>`; nothing here creates that tag.
 
 Callers must pin a full SHA (the org requires it). The subject carries that SHA, so any `ci` commit satisfies a policy that
 matches `[0-9a-f]{40}`: the control is the callers' reviewed pin PRs.

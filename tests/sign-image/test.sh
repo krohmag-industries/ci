@@ -80,29 +80,30 @@ check "the provenance names the caller, the base and the signing workflow's comm
   'jq -e --arg c "$ci_sha" --arg s "$sha" ".buildDefinition.resolvedDependencies | any(.digest.gitCommit == \$c) and any(.digest.gitCommit == \$s)" "$t/out/provenance.json" >/dev/null &&
    jq -e ".runDetails.builder.id == \"https://github.com/krohmag-industries/ci/.github/workflows/sign-image.yaml\"" "$t/out/provenance.json" >/dev/null'
 
-refused() { # DESCRIPTION: the last run_predicates must have failed (signing is a later script, so it never ran)
-  check "refused: $1" '[ $rc != 0 ] && ! grep -q "^sign " "$t/cosign.calls" 2>/dev/null'
+refused() { # DESCRIPTION MESSAGE: the last run_predicates must have failed with MESSAGE (signing is a later script, so it never ran)
+  want=$2
+  check "refused: $1" '[ $rc != 0 ] && grep -q -- "$want" "$t/log"'
 }
 fixtures; jq '.config.Labels["org.opencontainers.image.revision"]="deadbeef"' "$t/config.json" >"$t/c" && mv "$t/c" "$t/config.json"
-run_predicates; refused "a revision label that is not the commit"
+run_predicates; refused "a revision label that is not the commit" "revision label is not"
 fixtures; jq '.architecture="arm64"' "$t/config.json" >"$t/c" && mv "$t/c" "$t/config.json"
-run_predicates; refused "an arm64 image"
+run_predicates; refused "an arm64 image" "not linux/amd64"
 fixtures; jq '.config.Labels["org.opencontainers.image.base.name"]="ghcr.io/krohmag-industries/other"' "$t/config.json" >"$t/c" && mv "$t/c" "$t/config.json"
-run_predicates; refused "a base name label that is not the named base"
+run_predicates; refused "a base name label that is not the named base" "base name label"
 fixtures; jq '.config.Labels["org.opencontainers.image.base.digest"]="sha256:'"$(d 3)"'"' "$t/config.json" >"$t/c" && mv "$t/c" "$t/config.json"
-run_predicates; refused "a base digest label that is not the named base"
+run_predicates; refused "a base digest label that is not the named base" "base digest label"
 fixtures; echo '{"layers":[{"digest":"sha256:l1"},{"digest":"sha256:l2"},{"digest":"sha256:l3"},{"digest":"sha256:l4"}]}' >"$t/image-manifest.json"
-run_predicates; refused "two layers on the base"
+run_predicates; refused "two layers on the base" "layers are not"
 fixtures; echo '{"layers":[{"digest":"sha256:l1"},{"digest":"sha256:l2"}]}' >"$t/image-manifest.json"
-run_predicates; refused "no layer on the base"
+run_predicates; refused "no layer on the base" "layers are not"
 fixtures; echo '{"layers":[{"digest":"sha256:x1"},{"digest":"sha256:x2"},{"digest":"sha256:l3"}]}' >"$t/image-manifest.json"
-run_predicates; refused "layers that are not the base's"
+run_predicates; refused "layers that are not the base's" "layers are not"
 fixtures; FAKE_COSIGN_FAIL='certificate-identity-regexp' run_predicates
-refused "a base without the expected signature"
-fixtures; jq -n '{packages:[]}' >"$t/sbom.json"; run_predicates; refused "an empty SBOM"
-fixtures; SBOM_PACKAGES="git curl" run_predicates; refused "an SBOM missing a required package"
-fixtures; run_predicates "$image:latest"; refused "a tag instead of a digest"
-fixtures; run_predicates "$image@$digest" "ghcr.io/krohmag-industries/app-base"; refused "a base without a digest"
+refused "a base without the expected signature" "has no signature"
+fixtures; jq -n '{packages:[]}' >"$t/sbom.json"; run_predicates; refused "an empty SBOM" "lists no packages"
+fixtures; SBOM_PACKAGES="git curl" run_predicates; refused "an SBOM missing a required package" "curl is not in the SBOM"
+fixtures; run_predicates "$image:latest"; refused "a tag instead of a digest" "not a digest reference"
+fixtures; run_predicates "$image@$digest" "ghcr.io/krohmag-industries/app-base"; refused "a base without a digest" "not a digest reference"
 
 # sign: signs first, then verifies each result twice (exact subject and pattern) with repository, ref and commit
 mkdir -p "$t/preds" && echo '{}' >"$t/preds/sbom.spdx.json" && echo '{}' >"$t/preds/provenance.json"
@@ -135,7 +136,7 @@ validate_inputs() { # [VAR=VALUE]...
 }
 validate_inputs; check "inputs: a good call is accepted" '[ $rc = 0 ]'
 validate_inputs OWNER=Krohmag-Industries; check "inputs: the owner compares lower-cased" '[ $rc = 0 ]'
-validate_inputs TAG=; validate_inputs SBOM_PACKAGES=; check "inputs: tag and sbom-packages are optional" '[ $rc = 0 ]'
+validate_inputs TAG= SBOM_PACKAGES=; check "inputs: tag and sbom-packages are optional" '[ $rc = 0 ]'
 bad() { validate_inputs "$1"; check "inputs: refused $2" '[ $rc != 0 ]'; }
 bad "IMAGE=ghcr.io/other-org/app" "an image in another owner's namespace"
 bad "IMAGE=$image:latest" "an image with a tag"
@@ -152,6 +153,10 @@ bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/app/x' "a base-signer t
 bad 'TAG=a b' "a tag with a space"
 bad 'TAG=$(id)' "a tag with a command substitution"
 bad 'SBOM_PACKAGES=git;id' "sbom-packages with a shell metacharacter"
+bad 'SBOM_PACKAGES=git*' "sbom-packages with a glob"
+bad "TAG=$(printf 'a%.0s' {1..129})" "a tag longer than 128 characters"
+bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/a^b$' "a base-signer with a ^ in the middle"
+bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/a$b$' "a base-signer with a $ in the middle"
 
 # The OIDC claims step: a fake token whose payload names the called workflow
 b64url() { base64 | tr -d '=\n' | tr '+/' '-_'; }

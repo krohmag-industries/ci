@@ -9,10 +9,10 @@ src="${1:?usage: attestations PREDICATES_DIR}"
 [ -s "$src/sbom.spdx.json" ] || { echo "no SBOM at $src/sbom.spdx.json" >&2; exit 1; }
 [ -s "$src/provenance.json" ] || { echo "no provenance at $src/provenance.json" >&2; exit 1; }
 
-count=$(jq '(.predicate // .) | [.packages[]?] | length' "$src/sbom.spdx.json")
+count=$(jq '[.packages[]?] | length' "$src/sbom.spdx.json")
 echo "Packages in the SBOM: ${count}"
 [ "$count" -gt 0 ] || { echo "the SBOM lists no packages: the scanner didn't read the image" >&2; exit 1; }
-names=$(jq -r '(.predicate // .) | .packages[]? | .name' "$src/sbom.spdx.json")
+names=$(jq -r '.packages[]? | .name' "$src/sbom.spdx.json")
 for p in ${SBOM_PACKAGES:-}; do
   if grep -qxF -- "$p" <<<"$names"; then echo "ok    $p is in the SBOM"; else echo "FAIL  $p is not in the SBOM" >&2; exit 1; fi
 done
