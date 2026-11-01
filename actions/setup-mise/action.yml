@@ -1,0 +1,23 @@
+name: Set up mise
+description: >-
+  Downloads a pinned mise release, checks it against the release's SHA256 sums, installs it and puts it on PATH.
+  Installing the tools in the caller's .mise.toml stays a step of the caller (it needs the caller's token).
+inputs:
+  version:
+    description: 'mise release tag, e.g. v2026.10.22. The caller pins it so its Renovate bumps it.'
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install mise
+      shell: bash
+      env:
+        MISE_VERSION: ${{ inputs.version }}
+      run: |
+        mkdir -p "$HOME/.local/bin" && cd "$RUNNER_TEMP"
+        base="https://github.com/jdx/mise/releases/download/${MISE_VERSION}"
+        curl -fsSLO "${base}/mise-${MISE_VERSION}-linux-x64"
+        curl -fsSL "${base}/SHASUMS256.txt" | grep -E " (\./)?mise-${MISE_VERSION}-linux-x64$" \
+          | sed 's#\./##' | sha256sum -c -
+        install -m 0755 "mise-${MISE_VERSION}-linux-x64" "$HOME/.local/bin/mise"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"

@@ -1,0 +1,4 @@
+rules:
+  # zizmor suggests `$/actions/...`, which actionlint (1.7.12) doesn't parse yet; `./` is the same action.
+  self-repository:
+    disable: true

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Lints the shared CI repo: ShellCheck on the scripts, actionlint and zizmor on the workflows and the
+# composite actions. CI runs this (.github/workflows/validate.yaml); locally: mise exec -- scripts/validate
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+fail=0
+shell_files=()
+while IFS= read -r f; do
+  head -n1 "$f" | grep -qE '^#!.*(ba)?sh' && shell_files+=("$f")
+done < <(git ls-files)
+shellcheck "${shell_files[@]}" && echo "ok  ${#shell_files[@]} scripts" || fail=1
+action_files=()
+while IFS= read -r f; do action_files+=("$f"); done < <(git ls-files 'actions/*/action.yml')
+actionlint && echo "ok  workflows" || fail=1
+zizmor --no-progress .github/workflows "${action_files[@]}" && echo "ok  zizmor" || fail=1
+exit "$fail"
