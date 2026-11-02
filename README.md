@@ -66,8 +66,8 @@ matches `[0-9a-f]{40}`: the control is the callers' reviewed pin PRs.
 Limits to know:
 
 - The signature plus the policy's repository and ref checks are the trust. The image's revision label, the layer check,
-  `sbom-packages` and `sbom-min-packages` are sanity checks: the build wrote the image, so a compromised build can make them pass. The provenance records
-  what GitHub's environment says (commit, base, workflow, run); it is not build provenance.
+  `sbom-packages` and `sbom-min-packages` are sanity checks: the build wrote the image, so a compromised build can make
+  them pass. The provenance records what GitHub's environment says (commit, base, workflow, run); it is not build provenance.
 - Two quick pushes can finish out of order and the older run can move `tag` back to an older, still-signed digest. Give the
   caller's sign job a `concurrency` group (`cancel-in-progress: false`) if that matters.
 - Keyless signatures go to Sigstore's public Rekor log: the caller's repository name, ref, commit and run URL become public, even
