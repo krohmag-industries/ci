@@ -52,12 +52,15 @@
       ]
     },
     {
-      "description": "mise itself is installed by the validate job and by sign-image.yaml (which holds id-token): one PR for both files, read the release notes",
+      "description": "mise itself is installed by the validate job and by sign-image.yaml (which holds id-token): one PR for both files, read the release notes. mise releases almost daily, so one weekly batch (Mondays before 5am; security-fix PRs ignore the schedule)",
       "matchDepNames": [
         "jdx/mise"
       ],
       "groupName": "mise",
-      "automerge": false
+      "automerge": false,
+      "schedule": [
+        "* 0-4 * * 1"
+      ]
     },
     {
       "description": "Skip a brand-new major's X.0.0 until X.0.1 or X.1.0 exists (Renovate can't see 'has a patch' directly)",
