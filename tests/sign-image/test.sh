@@ -192,9 +192,11 @@ bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/a$b$' "a base-signer wi
 # Inputs reach scripts only through env, never interpolated into a run script (the first check guards a renamed job)
 check "the sign job has steps to check" 'yq -e ".jobs.sign.steps | length > 0" "$workflow" >/dev/null'
 check "no run script interpolates anything (\${{ }})" '! yq ".jobs.sign.steps[].run // \"\"" "$workflow" | grep -qF "\${{"'
-# Every input reaches the job's env as ${{ inputs.<name> }}, so a renamed env key can't silently turn a check off
+# Every input reaches the job's env under its upper-snake name (sbom-min-packages -> SBOM_MIN_PACKAGES), which is what the
+# scripts read, so a renamed env key can't silently turn a check off
 inputs_ok=$(yq '.on.workflow_call.inputs | keys | .[]' "$workflow" | while read -r k; do
-  yq -e ".jobs.sign.env | to_entries | map(.value) | any_c(. == \"\${{ inputs.$k }}\")" "$workflow" >/dev/null || echo "$k"
+  e=$(tr 'a-z-' 'A-Z_' <<<"$k")
+  [ "$(yq ".jobs.sign.env.$e" "$workflow")" = "\${{ inputs.$k }}" ] || echo "$k"
 done)
 check "every input is passed to the job's env${inputs_ok:+ (missing: $inputs_ok)}" '[ -z "$inputs_ok" ]'
 
