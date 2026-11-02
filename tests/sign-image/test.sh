@@ -185,9 +185,11 @@ rc=0
 check "predicates runs without the OIDC request variables" '[ $rc = 0 ] && [ "$(cat "$t/seen")" = "url=unset token=unset" ]'
 
 # The install is locked and mise reads nothing but .mise.sign.toml
-env_of() { yq ".jobs.sign.env.$1" "$workflow"; }
-check "install: mise reads only .mise.sign.toml" '[ "$(env_of MISE_OVERRIDE_CONFIG_FILENAMES)" = .mise.sign.toml ]'
-check "install: locked, with provenance re-verified" '[ "$(env_of MISE_LOCKED)" = 1 ] && [ "$(env_of MISE_LOCKED_VERIFY_PROVENANCE)" = 1 ]'
+override=$(yq '.jobs.sign.env.MISE_OVERRIDE_CONFIG_FILENAMES' "$workflow")
+locked=$(yq '.jobs.sign.env.MISE_LOCKED' "$workflow")
+verify=$(yq '.jobs.sign.env.MISE_LOCKED_VERIFY_PROVENANCE' "$workflow")
+check "install: mise reads only .mise.sign.toml" '[ "$override" = .mise.sign.toml ]'
+check "install: locked, with provenance re-verified" '[ "$locked" = 1 ] && [ "$verify" = 1 ]'
 installs=$(yq '[.jobs.sign.steps[] | select((.run // "") | test("mise install"))] | length' "$workflow")
 check "install: exactly one step installs tools, with --locked" '[ "$installs" = 1 ] && yq ".jobs.sign.steps[] | select((.run // \"\") | test(\"mise install\")) | .run" "$workflow" | grep -q -- "mise install --locked"'
 
