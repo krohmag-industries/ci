@@ -14,5 +14,6 @@ while IFS= read -r f; do action_files+=("$f"); done < <(git ls-files 'actions/*/
 actionlint && echo "ok  workflows" || fail=1
 zizmor --no-progress .github/workflows "${action_files[@]}" && echo "ok  zizmor" || fail=1
 scripts/check-mise-locks && echo "ok  mise.sign.lock" || fail=1
+if out=$(tests/check-mise-locks/test.sh 2>&1); then echo "ok  check-mise-locks tests"; else grep -v '^ok' <<<"$out"; fail=1; fi
 if out=$(tests/sign-image/test.sh 2>&1); then echo "ok  sign-image tests"; else grep -v '^ok' <<<"$out"; fail=1; fi
 exit "$fail"
