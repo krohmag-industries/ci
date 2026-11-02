@@ -102,6 +102,14 @@ fixtures; FAKE_COSIGN_FAIL='certificate-identity-regexp' run_predicates
 refused "a base without the expected signature" "has no signature"
 fixtures; jq -n '{packages:[]}' >"$t/sbom.json"; run_predicates; refused "an empty SBOM" "lists no packages"
 fixtures; SBOM_PACKAGES="git curl" run_predicates; refused "an SBOM missing a required package" "curl is not in the SBOM"
+fixtures; jq -n '{packages:[{name:"git"},{name:"libc6"}]}' >"$t/sbom.json"
+SBOM_MIN_PACKAGES=2 run_predicates; check "an SBOM with exactly the minimum number of packages is accepted" '[ $rc = 0 ]'
+SBOM_MIN_PACKAGES=3 run_predicates; refused "an SBOM with fewer packages than the minimum" "fewer than the 3 required"
+SBOM_MIN_PACKAGES='' run_predicates; check "an empty minimum means the default of one package" '[ $rc = 0 ]'
+for v in 0 -1 1.5 abc 010 10001 100000 " 5" "5 " "5;id" '$(id)' 99999999999999999999; do
+  SBOM_MIN_PACKAGES=$v run_predicates; refused "a minimum of '$v'" "must be a whole number from 1 to 10000"
+done
+SBOM_MIN_PACKAGES=10000 run_predicates; refused "a minimum of 10000 on a two-package SBOM" "fewer than the 10000 required"
 fixtures; run_predicates "$image:latest"; refused "a tag instead of a digest" "not a digest reference"
 fixtures; run_predicates "$image@$digest" "ghcr.io/krohmag-industries/app-base"; refused "a base without a digest" "not a digest reference"
 
@@ -165,11 +173,21 @@ bad 'TAG=x.att' "an attestation tag suffix"
 bad 'TAG=x.sbom' "an sbom tag suffix"
 validate_inputs TAG=main GITHUB_REF=refs/pull/1/merge; check "inputs: refused a tag moved from a pull request ref" '[ $rc != 0 ] && grep -q "refs/heads/main" "$t/log"'
 bad 'TAG=$(id)' "a tag with a command substitution"
+validate_inputs SBOM_MIN_PACKAGES=50; check "inputs: a minimum of 50 is accepted" '[ $rc = 0 ]'
+validate_inputs SBOM_MIN_PACKAGES=''; check "inputs: an empty minimum is accepted" '[ $rc = 0 ]'
+validate_inputs SBOM_MIN_PACKAGES=1; check "inputs: a minimum of 1 is accepted" '[ $rc = 0 ]'
+validate_inputs SBOM_MIN_PACKAGES=10000; check "inputs: a minimum of 10000 is accepted" '[ $rc = 0 ]'
+for v in 0 -1 1.5 abc 010 10001 99999 100000 " 5" "5 " "5;id" '$(id)' 'a[$(id)]' 99999999999999999999; do bad "SBOM_MIN_PACKAGES=$v" "an sbom-min-packages of '$v'"; done
 bad 'SBOM_PACKAGES=git;id' "sbom-packages with a shell metacharacter"
 bad 'SBOM_PACKAGES=git*' "sbom-packages with a glob"
 bad "TAG=$(printf 'a%.0s' {1..129})" "a tag longer than 128 characters"
 bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/a^b$' "a base-signer with a ^ in the middle"
 bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/a$b$' "a base-signer with a $ in the middle"
+
+# The minimum reaches the scripts only through the job's env, never interpolated into a run script
+min_env=$(yq '.jobs.sign.env.SBOM_MIN_PACKAGES' "$workflow")
+check "sbom-min-packages is passed through env" '[ "$min_env" = "\${{ inputs.sbom-min-packages }}" ]'
+check "no run script interpolates an input" '! yq ".jobs.sign.steps[].run // \"\"" "$workflow" | grep -q "inputs\\."'
 
 # The image-reading step must not see the OIDC request variables (only `sign` may mint a token)
 mkdir -p "$t/stepdir/.sign-image/scripts/sign-image"

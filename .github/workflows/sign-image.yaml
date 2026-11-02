@@ -55,6 +55,13 @@ on:
         type: string
         required: false
         default: ''
+      sbom-min-packages:
+        description: >-
+          Optional minimum number of packages the SBOM must list, a whole number from 1 to 10000 (blaster's image is
+          Debian-based and uses 50). Empty means the default of at least one package. A string, so it is checked as written.
+        type: string
+        required: false
+        default: ''
 
 permissions: {}
 
@@ -73,6 +80,7 @@ jobs:
       BASE_SIGNER: ${{ inputs.base-signer }}
       TAG: ${{ inputs.tag }}
       SBOM_PACKAGES: ${{ inputs.sbom-packages }}
+      SBOM_MIN_PACKAGES: ${{ inputs.sbom-min-packages }}
       OWNER: ${{ github.repository_owner }}
       REPO: ${{ github.repository }}
       # renovate: datasource=github-releases depName=jdx/mise
@@ -109,6 +117,10 @@ jobs:
           [[ -z $TAG || ( $TAG != sha256-* && $TAG != *.sig && $TAG != *.att && $TAG != *.sbom ) ]] || fail "tag is reserved for cosign"
           [[ -z $TAG || $GITHUB_REF = refs/heads/main ]] || fail "tag may only be moved from refs/heads/main (this run is $GITHUB_REF)"
           [[ -z $SBOM_PACKAGES || $SBOM_PACKAGES =~ ^[A-Za-z0-9._+\ -]+$ ]] || fail "sbom-packages is not a list of package names"
+          # No leading zero (bash would read it as octal), at most five digits, and 1 to 10000: scripts/sign-image/attestations
+          # checks the same bounds again.
+          [[ -z $SBOM_MIN_PACKAGES || ( $SBOM_MIN_PACKAGES =~ ^[1-9][0-9]{0,4}$ && $SBOM_MIN_PACKAGES -le 10000 ) ]] ||
+            fail "sbom-min-packages must be a whole number from 1 to 10000"
 
       # The called workflow's own reference and commit are in the OIDC token and nowhere else (github.job_workflow_sha was
       # empty when tested, 2026-11-01). The token is minted for this read only, with the default audience (the owner's

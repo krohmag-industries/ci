@@ -29,11 +29,13 @@ extensions (`--certificate-github-workflow-repository`, `-ref`); kroh-lab `docs/
       base-signer: '^https://github\.com/krohmag-industries/app/\.github/workflows/base\.yaml@refs/heads/main$'
       tag: main                                        # optional: moved only after everything verified, and only from refs/heads/main
       sbom-packages: 'git ca-certificates'             # optional: names the SBOM must list
+      sbom-min-packages: '50'                          # optional: the least number of packages it must list (1 to 10000)
 ```
 
 What it refuses before signing anything: an image whose revision label is not the caller's commit (`GITHUB_SHA`), that is not
 linux/amd64, whose base labels are not `base`, whose layers are not the base's plus exactly one, or whose base lacks a keyless
-signature matching `base-signer` from the caller repository's `main`; an empty SBOM; inputs that are not what they claim to be;
+signature matching `base-signer` from the caller repository's `main`; an SBOM with fewer packages than `sbom-min-packages` (at
+least one when it is empty or unset); inputs that are not what they claim to be;
 and a call that names this workflow by anything but a full commit SHA.
 
 How the job holds the signing identity (`id-token: write`) safely:
@@ -63,8 +65,8 @@ matches `[0-9a-f]{40}`: the control is the callers' reviewed pin PRs.
 
 Limits to know:
 
-- The signature plus the policy's repository and ref checks are the trust. The image's revision label, the layer check and
-  `sbom-packages` are sanity checks: the build wrote the image, so a compromised build can make them pass. The provenance records
+- The signature plus the policy's repository and ref checks are the trust. The image's revision label, the layer check,
+  `sbom-packages` and `sbom-min-packages` are sanity checks: the build wrote the image, so a compromised build can make them pass. The provenance records
   what GitHub's environment says (commit, base, workflow, run); it is not build provenance.
 - Two quick pushes can finish out of order and the older run can move `tag` back to an older, still-signed digest. Give the
   caller's sign job a `concurrency` group (`cancel-in-progress: false`) if that matters.
