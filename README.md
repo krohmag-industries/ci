@@ -71,9 +71,11 @@ Limits to know:
 - Keyless signatures go to Sigstore's public Rekor log: the caller's repository name, ref, commit and run URL become public, even
   for a private repository.
 - The signing tools are pinned in `.mise.sign.toml` and locked in `mise.sign.lock` (checksums, and the provenance mise
-  re-checks with `MISE_LOCKED_VERIFY_PROVENANCE`); `scripts/check-mise-locks` (run by `scripts/validate`) pins what a legitimate
-  lock may contain, because `mise install --locked` trusts an entry as written. mise reads only `.mise.sign.toml` in the sign job (`MISE_OVERRIDE_CONFIG_FILENAMES`), so no other config file in the checkout is loaded. The lint also fails a lock that no longer matches `.mise.sign.toml`. A tool bump needs `MISE_ENV=sign mise lock
-  --platform linux-x64,macos-arm64 <tools>` by hand (no Renovate here yet). Only linux-x64 and macos-arm64 are locked; any other
-  runner architecture fails closed. go-containerregistry (crane) publishes no provenance, so its checksum comes from mise-versions: a weaker pin
-  than the other three. blaster has a similar lint for its own locks; a fix to one is a fix to both. The mise binary is still checked only against
-  SHASUMS256.txt from its own release.
+  re-checks with `MISE_LOCKED_VERIFY_PROVENANCE`). The job sets `MISE_OVERRIDE_CONFIG_FILENAMES`, so mise reads only
+  `.mise.sign.toml`: no other config file in the checkout is loaded. `scripts/check-mise-locks` (run by `scripts/validate`)
+  pins what a legitimate lock may contain, because `mise install --locked` trusts an entry as written, and fails a lock that no
+  longer matches `.mise.sign.toml`. A tool bump needs `MISE_ENV=sign mise lock --platform linux-x64,macos-arm64 <tools>` by
+  hand (`MISE_ENV` only selects the file when generating the lock; no Renovate here yet). Only linux-x64 and macos-arm64
+  are locked; any other runner architecture fails closed. go-containerregistry (crane) publishes no provenance, so its
+  checksum comes from mise-versions: a weaker pin than the other three. blaster has a similar lint for its own locks; a fix
+  to one is a fix to both. The mise binary itself is still checked only against SHASUMS256.txt from its own release.
