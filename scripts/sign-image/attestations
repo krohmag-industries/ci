@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 # Usage: scripts/sign-image/attestations PREDICATES_DIR
 # Checks the bare predicates (sbom.spdx.json and provenance.json) before they are attested. An empty SBOM would pass
-# every other check and tell a scanner nothing, so it must list at least one package and every name in SBOM_PACKAGES
-# (space separated, set by the caller); the provenance must be a SLSA v1 predicate with a builder and dependencies.
+# every other check and tell a scanner nothing, so it must list at least SBOM_MIN_PACKAGES packages (a whole number from
+# 1 to 10000, default 1) and every name in SBOM_PACKAGES (space separated); both are set by the caller.
+# The provenance must be a SLSA v1 predicate with a builder and dependencies.
 set -euo pipefail
 src="${1:?usage: attestations PREDICATES_DIR}"
 [ -d "$src" ] || { echo "no directory at $src" >&2; exit 1; }
 [ -s "$src/sbom.spdx.json" ] || { echo "no SBOM at $src/sbom.spdx.json" >&2; exit 1; }
 [ -s "$src/provenance.json" ] || { echo "no provenance at $src/provenance.json" >&2; exit 1; }
 
+min="${SBOM_MIN_PACKAGES:-1}"
+# No leading zero (bash would read it as octal) and at most five digits before the numeric bound is applied.
+[[ $min =~ ^[1-9][0-9]{0,4}$ && $min -le 10000 ]] || { echo "SBOM_MIN_PACKAGES must be a whole number from 1 to 10000, not '${min}'" >&2; exit 1; }
 count=$(jq '[.packages[]?] | length' "$src/sbom.spdx.json")
-echo "Packages in the SBOM: ${count}"
-[ "$count" -gt 0 ] || { echo "the SBOM lists no packages: the scanner didn't read the image" >&2; exit 1; }
+echo "Packages in the SBOM: ${count} (at least ${min} required)"
+[ "$count" -ge 1 ] || { echo "the SBOM lists no packages: the scanner didn't read the image" >&2; exit 1; }
+[ "$count" -ge "$min" ] || { echo "the SBOM lists ${count} packages, fewer than the ${min} required: the scanner didn't read the whole image" >&2; exit 1; }
 names=$(jq -r '.packages[]? | .name' "$src/sbom.spdx.json")
 for p in ${SBOM_PACKAGES:-}; do
   if grep -qxF -- "$p" <<<"$names"; then echo "ok    $p is in the SBOM"; else echo "FAIL  $p is not in the SBOM" >&2; exit 1; fi

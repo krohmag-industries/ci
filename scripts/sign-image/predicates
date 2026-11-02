@@ -8,7 +8,8 @@
 # whose BASE does not carry a keyless signature matching BASE_SIGNER_REGEXP from this repository's main.
 # Then runs scripts/sign-image/attestations on what it wrote. Needs cosign, crane, syft and jq; registry credentials in
 # the Docker config (`crane auth login`); GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_REF, GITHUB_WORKFLOW_REF and
-# JOB_WORKFLOW_REF (for the provenance). SBOM_PACKAGES (space separated) names packages the SBOM must list.
+# JOB_WORKFLOW_REF (for the provenance). SBOM_PACKAGES (space separated) names packages the SBOM must list and
+# SBOM_MIN_PACKAGES (optional, 1 to 10000) is the least number of packages it may list; attestations enforces both.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 die() { echo "sign-image/predicates: $*" >&2; exit 1; }
