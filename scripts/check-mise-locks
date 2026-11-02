@@ -93,7 +93,7 @@ tracked = subprocess.run(
 for path in tracked:
     is_lock = re.search(r"(^|/)\.?mise(\.[^/]+)?\.lock$", path)
     is_config = re.search(
-        r"(^|/)(\.?mise([./][^/]*)?\.toml|\.mise/|\.config/mise|mise/config|\.miserc|\.tool-versions$)", path
+        r"(^|/)(\.?mise([./][^/]*)?\.toml|\.?mise/|\.config/mise|mise/config|\.miserc|\.tool-versions$)", path
     )
     if (is_lock and path != LOCK) or (is_config and path not in (CONFIG, ".mise.toml")):
         errors.append(f"{path}: mise would load this file; only {CONFIG}, .mise.toml and {LOCK} are allowed")

@@ -184,6 +184,13 @@ rc=0
   bash -c "$(step 'Check the image and write the SBOM and provenance')") >"$t/log" 2>&1 || rc=$?
 check "predicates runs without the OIDC request variables" '[ $rc = 0 ] && [ "$(cat "$t/seen")" = "url=unset token=unset" ]'
 
+# The install is locked and mise reads nothing but .mise.sign.toml
+env_of() { yq ".jobs.sign.env.$1" "$workflow"; }
+check "install: mise reads only .mise.sign.toml" '[ "$(env_of MISE_OVERRIDE_CONFIG_FILENAMES)" = .mise.sign.toml ]'
+check "install: locked, with provenance re-verified" '[ "$(env_of MISE_LOCKED)" = 1 ] && [ "$(env_of MISE_LOCKED_VERIFY_PROVENANCE)" = 1 ]'
+installs=$(yq '[.jobs.sign.steps[] | select((.run // "") | test("mise install"))] | length' "$workflow")
+check "install: exactly one step installs tools, with --locked" '[ "$installs" = 1 ] && yq ".jobs.sign.steps[] | select((.run // \"\") | test(\"mise install\")) | .run" "$workflow" | grep -q -- "mise install --locked"'
+
 # The OIDC claims step: a fake token whose payload names the called workflow
 b64url() { base64 | tr -d '=\n' | tr '+/' '-_'; }
 read_claims() { # JOB_WORKFLOW_REF JOB_WORKFLOW_SHA

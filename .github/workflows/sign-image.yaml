@@ -77,7 +77,9 @@ jobs:
       REPO: ${{ github.repository }}
       # renovate: datasource=github-releases depName=jdx/mise
       MISE_VERSION: v2026.10.22
-      MISE_ENV: sign # .mise.sign.toml: cosign, syft, crane, jq; locked in mise.sign.lock
+      # mise reads only .mise.sign.toml (cosign, syft, crane, jq), locked in mise.sign.lock: no other config file in the checkout
+      # (.mise.toml, mise/conf.d/*.toml, with their hooks and settings) is loaded.
+      MISE_OVERRIDE_CONFIG_FILENAMES: .mise.sign.toml
       MISE_LOCKED: "1" # any install must match the lockfile
       MISE_LOCKED_VERIFY_PROVENANCE: "1" # mise skips the signature check when the lock has a checksum, unless this is set
     steps:

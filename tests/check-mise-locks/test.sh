@@ -53,6 +53,7 @@ specifiers = ["1"]
 [[tools."aqua:anchore/syft"]]'; expect "a lock entry for a tool that is not pinned" 1 "are not the pins"
 fresh; : >"$t/r/mise.lock"; git -C "$t/r" add -A; expect "a stray mise.lock" 1 "mise would load"
 fresh; : >"$t/r/mise.local.toml"; git -C "$t/r" add -A; expect "a stray mise.local.toml" 1 "mise would load"
+fresh; mkdir -p "$t/r/mise/conf.d"; : >"$t/r/mise/conf.d/x.toml"; git -C "$t/r" add -A; expect "a stray mise/conf.d/x.toml" 1 "mise would load"
 fresh; mkdir "$t/r/.config"; : >"$t/r/.config/mise.toml"; git -C "$t/r" add -A; expect "a stray .config/mise.toml" 1 "mise would load"
 
 echo "$n checks"
