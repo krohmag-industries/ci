@@ -189,7 +189,8 @@ bad "TAG=$(printf 'a%.0s' {1..129})" "a tag longer than 128 characters"
 bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/a^b$' "a base-signer with a ^ in the middle"
 bad 'BASE_SIGNER=^https://github\.com/krohmag-industries/a$b$' "a base-signer with a $ in the middle"
 
-# The minimum reaches the scripts only through the job's env, never interpolated into a run script
+# Inputs reach scripts only through env, never interpolated into a run script (the first check guards a renamed job)
+check "the sign job has steps to check" 'yq -e ".jobs.sign.steps | length > 0" "$workflow" >/dev/null'
 check "no run script interpolates an input" '! yq ".jobs.sign.steps[].run // \"\"" "$workflow" | grep -q "inputs\\."'
 
 # The image-reading step must not see the OIDC request variables (only `sign` may mint a token)

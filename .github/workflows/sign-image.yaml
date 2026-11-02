@@ -58,7 +58,8 @@ on:
       sbom-min-packages:
         description: >-
           Optional minimum number of packages the SBOM must list, a whole number from 1 to 10000 (blaster's image is
-          Debian-based and uses 50). Empty means the default of at least one package. A string, not a number, so a value like 010 or 1.5 is refused instead of converted.
+          Debian-based and uses 50). Empty means the default of at least one package. A string, not a number, so a value like 010 or 1.5 is
+          refused instead of converted.
         type: string
         required: false
         default: ''
