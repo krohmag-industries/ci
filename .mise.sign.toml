@@ -1,5 +1,6 @@
 # Tools the sign-image workflow runs beside the signing identity: `MISE_ENV=sign mise install <tool>...`. Kept apart from
-# .mise.toml (the lint tools) so this repo's own validate job doesn't install them. Renovate's mise manager keeps these current.
+# .mise.toml (the lint tools) so this repo's own validate job doesn't install them. Bumping one needs `MISE_ENV=sign mise lock --platform linux-x64,macos-arm64`
+# for it: scripts/check-mise-locks fails a lock that no longer matches these pins.
 [tools]
 "aqua:sigstore/cosign" = "3.1.4"
 "aqua:anchore/syft" = "1.55.0"
