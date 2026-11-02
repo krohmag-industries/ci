@@ -75,7 +75,42 @@ Limits to know:
   `.mise.sign.toml`: no other config file in the checkout is loaded. `scripts/check-mise-locks` (run by `scripts/validate`)
   pins what a legitimate lock may contain, because `mise install --locked` trusts an entry as written, and fails a lock that no
   longer matches `.mise.sign.toml`. A tool bump needs `MISE_ENV=sign mise lock --platform linux-x64,macos-arm64 <tools>` by
-  hand (`MISE_ENV` only selects the file when generating the lock; no Renovate here yet). Only linux-x64 and macos-arm64
+  hand (`MISE_ENV` only selects the file when generating the lock; Renovate does not write it, see "Renovate" below). Only linux-x64 and macos-arm64
   are locked; any other runner architecture fails closed. go-containerregistry (crane) publishes no provenance, so its
   checksum comes from mise-versions: a weaker pin than the other three. blaster has a similar lint for its own locks; a fix
   to one is a fix to both. The mise binary itself is still checked only against SHASUMS256.txt from its own release.
+
+## Releases and how callers pick them up
+
+A release is a tag `vX.Y.Z` on a commit of `main` (a GitHub release creates it; the user does this, not a session). Callers pin
+`uses: krohmag-industries/ci/<path>@<full sha> # vX.Y.Z`; their Renovate (GitHub Actions manager, `helpers:pinGitHubActionDigests`)
+moves the SHA to the newest tag the comment can follow. Nothing reaches a caller until a tag exists, so a merged change that
+callers should get needs a release. A caller whose config sets `minimumReleaseAge: 3 days` (kroh-lab's and blaster's do) opens the
+bump PR three days after the tag; a major (`v2.0.0`) waits 14 days and is never automerged under their config. The caller's PR is
+the review: it moves the signing identity's SHA, so for `sign-image` also check the caller's policy still accepts it
+(kroh-lab `docs/decisions.md`, "Signing identity, tested"). Tag a release only from a merged commit, and name that commit.
+
+## Renovate
+
+`renovate.json` (modelled on kroh-lab's) keeps pins current once the Renovate app is enabled on this repository:
+
+- **Actions**: `actions/checkout` and any other `uses:` are pinned to a full SHA with the tag in a comment and bumped. The org's
+  Actions policy (GitHub-owned and verified only) is what limits which actions may be used; Renovate adds no rule of its own.
+- **Lint tools** (`.mise.toml`): ordinary PRs.
+- **mise itself** (`MISE_VERSION` with a `# renovate:` comment in `validate.yaml` and `sign-image.yaml`): one PR for both files.
+  `sign-image.yaml` runs it in the job that holds `id-token`: read the release notes.
+- **Signing tools** (`.mise.sign.toml`, and `jq`, which is pinned in both mise files and must be equal): a PR is **opened only
+  when someone ticks it on the Dependency Dashboard**, is labelled `sign-tools` and is never automerged. Renovate's mise manager
+  updates a `mise.lock` (and `mise.<env>.lock`) only by running `mise lock` as an "unsafe execution" that a self-hosted admin must
+  allow, a global setting that is not in this file (we don't administer the hosted app), and `skipArtifactsUpdate` is set so it does not try. So the PR changes the pin and not
+  `mise.sign.lock`, and `validate` fails until the lock is regenerated. On the PR branch:
+
+  ```sh
+  MISE_ENV=sign mise lock --platform linux-x64,macos-arm64 aqua:sigstore/cosign   # each tool the PR bumps
+  git diff mise.sign.lock    # read it: only that tool's version, checksums, urls and url_api; provenance kept
+  mise exec -- scripts/validate
+  ```
+
+  Commit it signed and push to the PR's branch (Renovate then leaves the branch alone). `scripts/check-mise-locks` is the gate
+  and is not relaxed for a bump: a lock that fails it is regenerated, not the check edited. The dashboard keeps a pending
+  bump listed, so a stale cosign or syft stays visible.

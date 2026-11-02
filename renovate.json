@@ -1,0 +1,81 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "timezone": "America/New_York",
+  "minimumReleaseAge": "3 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "mise's own version in the workflows (setup-mise takes it as an input), annotated with a '# renovate:' comment",
+      "managerFilePatterns": [
+        "/(^|/)\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*[A-Z_]+: (?<currentValue>\\S+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "The tools the sign-image workflow runs beside the signing identity (.mise.sign.toml) are locked in mise.sign.lock, which scripts/check-mise-locks holds to what a real `mise lock` writes. Renovate can't write that lock (it needs a mise.lock beside the config and a global allowedUnsafeExecutions that the hosted app doesn't give us), so a bump of the pin alone fails validate. These bumps wait for approval on the Dependency Dashboard (they stay visible there, so a stale cosign shows), never automerge, and carry the procedure in the PR body",
+      "matchFileNames": [
+        ".mise.sign.toml"
+      ],
+      "dependencyDashboardApproval": true,
+      "skipArtifactsUpdate": true,
+      "automerge": false,
+      "addLabels": [
+        "sign-tools"
+      ],
+      "prBodyNotes": [
+        "**This PR is not mergeable as it stands:** `mise.sign.lock` must change with the pin, or `scripts/check-mise-locks` fails `validate`. Renovate does not write it. On this branch, run `MISE_ENV=sign mise lock --platform linux-x64,macos-arm64 <tool>` for each tool bumped (`GITHUB_TOKEN` set, to avoid API rate limits), read the diff (a new `url` or `checksum` host, a lost `provenance` line, or a changed platform set is a red flag; do not edit `scripts/check-mise-locks` to make it pass), run `mise exec -- scripts/validate`, and push the lock commit signed. Renovate stops rebasing a branch someone else committed to. After merge, a release of this repo is needed before callers' Renovate sees the bump (README, \"Releases and how callers pick them up\")."
+      ]
+    },
+    {
+      "description": "jq is pinned in both mise files and must be equal (a comment in each says so): one PR, and under the sign-tools approval rule above because one of the two is locked",
+      "matchDepNames": [
+        "aqua:jqlang/jq",
+        "jqlang/jq"
+      ],
+      "groupName": "jq",
+      "dependencyDashboardApproval": true,
+      "skipArtifactsUpdate": true,
+      "automerge": false,
+      "addLabels": [
+        "sign-tools"
+      ]
+    },
+    {
+      "description": "mise itself is installed by the validate job and by sign-image.yaml (which holds id-token): one PR for both files, read the release notes",
+      "matchDepNames": [
+        "jdx/mise"
+      ],
+      "groupName": "mise",
+      "automerge": false
+    },
+    {
+      "description": "Skip a brand-new major's X.0.0 until X.0.1 or X.1.0 exists (Renovate can't see 'has a patch' directly)",
+      "matchPackageNames": [
+        "*"
+      ],
+      "allowedVersions": "!/^v?\\d+\\.0\\.0(?:[-+].*)?$/"
+    },
+    {
+      "description": "Major bumps need a human to read the changelog, and a longer wait than the 3-day default",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "major"
+      ],
+      "minimumReleaseAge": "14 days",
+      "automerge": false
+    }
+  ]
+}
