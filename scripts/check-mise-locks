@@ -7,7 +7,7 @@ once a checksum is present. The lock is a generated file nobody reads in review,
 `mise lock` writes: the tool set and versions of .mise.sign.toml, the tool's own backend, an https URL on the tool's own
 release path whose tag names the locked version, a checksum on both platforms, and the `provenance` upstream publishes.
 It also refuses any other mise config or lock file, which `mise install --locked` would load (tracked files only). Run by
-scripts/validate. krohmag-industries/blaster has a similar script for its own locks; a fix to one is a fix to both.
+scripts/validate.
 """
 import re
 import subprocess

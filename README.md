@@ -1,13 +1,12 @@
 # ci
 
-Shared CI for the krohmag-industries repos (kroh-lab, blaster, reelpick, spyglass). Why and how:
-kroh-lab `docs/decisions.md`, "A shared CI repo".
+Shared CI for `krohmag-industries`'s repos.
 
 - `actions/setup-mise`: download a pinned mise, check its SHA256, install, add to PATH. Input `version`.
 - `actions/job-resources`: log the job's memory peak and CPU; quiet no-op without cgroup v2.
 
 Callers pin by full commit SHA: `uses: krohmag-industries/ci/actions/<name>@<sha> # <ref>`.
-Change one repo's pin first (kroh-lab), then the rest.
+Change one repo's pin first, then the rest.
 
 ## Reusable workflow: `sign-image`
 
@@ -15,7 +14,7 @@ Change one repo's pin first (kroh-lab), then the rest.
 provenance, verifies all three, and optionally moves a tag. The signature's identity is the workflow file:
 `https://github.com/krohmag-industries/ci/.github/workflows/sign-image.yaml@<the SHA the caller wrote>`, with the caller in the
 certificate's extensions (repository, ref, commit). Consumers match the subject with a pattern and pin the caller from the
-extensions (`--certificate-github-workflow-repository`, `-ref`); kroh-lab `docs/decisions.md`, "Signing identity, tested".
+extensions (`--certificate-github-workflow-repository`, `-ref`).
 
 ```yaml
   sign:
@@ -57,7 +56,7 @@ How the job holds the signing identity (`id-token: write`) safely:
 
 Test: `tests/sign-image/test.sh` (fake crane, cosign, syft and curl), run by `scripts/validate`, covers the scripts and the
 workflow's input and OIDC-claim steps. The checkout, tool install, registry login, summary and tag steps run only for real: a
-run needs a package to push to; see kroh-lab `docs/decisions.md`. The caller's build is expected to have pushed
+run needs a package to push to. The caller's build is expected to have pushed
 `<image>:<commit sha>`; nothing here creates that tag.
 
 Callers must pin a full SHA (the org requires it). The subject carries that SHA, so any `ci` commit satisfies a policy that
@@ -79,22 +78,21 @@ Limits to know:
   longer matches `.mise.sign.toml`. A tool bump needs `MISE_ENV=sign mise lock --platform linux-x64,macos-arm64 <tools>` by
   hand (`MISE_ENV` only selects the file when generating the lock; Renovate does not write it, see "Renovate" below). Only linux-x64 and macos-arm64
   are locked; any other runner architecture fails closed. go-containerregistry (crane) publishes no provenance, so its
-  checksum comes from mise-versions: a weaker pin than the other three. blaster has a similar lint for its own locks; a fix
-  to one is a fix to both. The mise binary itself is still checked only against SHASUMS256.txt from its own release.
+  checksum comes from mise-versions: a weaker pin than the other three. Callers may have a similar lint for their own locks; a fix
+  to one may apply to both. The mise binary itself is still checked only against SHASUMS256.txt from its own release.
 
 ## Releases and how callers pick them up
 
 A release is a tag `vX.Y.Z` on a commit of `main` (a GitHub release creates it; the user does this, not a session). Callers pin
 `uses: krohmag-industries/ci/<path>@<full sha> # vX.Y.Z`; their Renovate (GitHub Actions manager, `helpers:pinGitHubActionDigests`)
 moves the SHA to the newest tag the comment can follow. Nothing reaches a caller until a tag exists, so a merged change that
-callers should get needs a release. A caller whose config sets `minimumReleaseAge: 3 days` (kroh-lab's and blaster's do) opens the
+callers should get needs a release. A caller whose config sets `minimumReleaseAge: 3 days` (some do) opens the
 bump PR three days after the tag; a major (`v2.0.0`) waits 14 days and is never automerged under their config. The caller's PR is
-the review: it moves the signing identity's SHA, so for `sign-image` also check the caller's policy still accepts it
-(kroh-lab `docs/decisions.md`, "Signing identity, tested"). Tag a release only from a merged commit, and name that commit.
+the review: it moves the signing identity's SHA, so for `sign-image` also check the caller's policy still accepts it. Tag a release only from a merged commit, and name that commit.
 
 ## Renovate
 
-`renovate.json` (modelled on kroh-lab's) keeps pins current once the Renovate app is enabled on this repository:
+`renovate.json` (modelled on the callers') keeps pins current once the Renovate app is enabled on this repository:
 
 - **Actions**: `actions/checkout` and any other `uses:` are pinned to a full SHA with the tag in a comment and bumped. The org's
   Actions policy (GitHub-owned and verified only) is what limits which actions may be used; Renovate adds no rule of its own.
