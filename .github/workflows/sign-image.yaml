@@ -9,9 +9,8 @@
 #
 # The signature's identity is this file: the Fulcio certificate's subject is
 # https://github.com/krohmag-industries/ci/.github/workflows/sign-image.yaml@<the SHA the caller wrote>, and its
-# extensions name the caller (repository, ref, commit). Consumers (kroh-lab's Kyverno policies, `cosign verify`) match
-# the subject with a pattern and pin the caller with --certificate-github-workflow-repository and -ref; see
-# kroh-lab docs/decisions.md, "Signing identity, tested". Nothing here is secret: ci is public.
+# extensions name the caller (repository, ref, commit). Consumers (Kyverno policies, `cosign verify`) match
+# the subject with a pattern and pin the caller with --certificate-github-workflow-repository and -ref. Nothing here is secret: ci is public.
 #
 # The scripts and tool pins come from this repository at the SAME commit as this file, not from the caller:
 # `uses: ./` and a plain checkout both resolve to the caller's workspace, and a workflow cannot name its own SHA.
@@ -57,8 +56,7 @@ on:
         default: ''
       sbom-min-packages:
         description: >-
-          Optional minimum number of packages the SBOM must list, a whole number from 1 to 10000 (blaster's image is
-          Debian-based and uses 50). Empty means the default of at least one package. A string, not a number, so a value like 010 or 1.5 is
+          Optional minimum number of packages the SBOM must list, a whole number from 1 to 10000 (a Debian-based image might use 50). Empty means the default of at least one package. A string, not a number, so a value like 010 or 1.5 is
           refused instead of converted.
         type: string
         required: false
