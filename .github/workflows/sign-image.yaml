@@ -83,7 +83,7 @@ jobs:
       OWNER: ${{ github.repository_owner }}
       REPO: ${{ github.repository }}
       # renovate: datasource=github-releases depName=jdx/mise
-      MISE_VERSION: v2026.10.23
+      MISE_VERSION: v2026.11.3
       # mise reads only .mise.sign.toml (cosign, syft, crane, jq), locked in mise.sign.lock: no other config file in the checkout
       # (.mise.toml, mise/conf.d/*.toml, with their hooks and settings) is loaded.
       MISE_OVERRIDE_CONFIG_FILENAMES: .mise.sign.toml
